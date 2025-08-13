@@ -1,0 +1,506 @@
+---
+title: "Figure-4"
+output: html_document
+date: "2025-08-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+setwd("/SynologyNAS/001_Thesis_work/Prj_TF_FAMILY_SPECIFIC/GITHUB_REPO/")
+
+
+mlr_pp_cv <- read_tsv("DATA/04_POSITIONAL_IMPORTANCE/MLR_L2_10fold_and_5fold_CV_position_and_features.tsv")
+
+```
+
+
+```{r}
+tf_families <-  c("bHLH", "bZIP", "C2H2", "CENPB", "CP2", "CUT", "ETS", 
+                  "forkhead", "GATA", "GCM", "HSF", "IRF", 
+                  "MAD", "MEIS", "MYB", "NFAT", "NFI", "nuclearreceptor", 
+                  "PAX", "POU", "PROX", "RRM", "RUNX", "SAND", "TBX", "TEA")
+
+```
+
+Figure 4A
+```{r}
+
+# Load your data as before
+taat_tfs <- read_tsv('METADATA/MWORDS_homedomain_TAAT_factors_10bp.tsv', col_names = F) %>% pull("X1")
+
+# Ensure the output directory exists
+# dir.create("FIGURES/Figure4", recursive = TRUE, showWarnings = FALSE)
+
+png(filename = "FIGURES/Figure4/homeodomain_TAAT_10bp.png", res = 300, height = 5000, width = 1200)
+ 
+# Process the data
+hd_map <- mlr_pp_cv %>%
+  
+    # 1. filter taat factirs
+    filter(fileid %in% taat_tfs) %>%
+    mutate(features = str_remove_all(features, "\\(|\\)|'") %>%
+             str_replace("^1mer,\\s*", "") %>%
+             trimws(),
+           features = ifelse(features == "", "1mer", features)) %>% 
+    select(fileid, pos, features, r2_test) %>% 
+    group_by(fileid, pos, features) %>% 
+    mutate(mean_r2_test_over_1ofold = mean(r2_test)) %>% 
+    ungroup() %>% 
+    select(fileid, pos, features, mean_r2_test_over_1ofold) %>% 
+    distinct() %>% 
+    group_by(fileid) %>% 
+    mutate(delta_r2 = ((mean_r2_test_over_1ofold - mean_r2_test_over_1ofold[features == "1mer"]) / mean_r2_test_over_1ofold[features == "1mer"]) * 100) %>% 
+    select(fileid, pos, features, delta_r2) %>% 
+    filter(features != "1mer") %>% 
+    group_by(fileid, pos) %>% 
+    mutate(total_contib = sum(delta_r2)) %>% 
+    select(fileid, pos, total_contib) %>% 
+    distinct() %>%
+    
+    # 2. Use `extract` to correctly get the family and TF name
+    # The regex ([^_]+) captures a group of one or more characters that are not an underscore.
+    tidyr::extract(fileid, into = c("family", "tf"), regex = "([^_]+)_([^_]+)_.*", remove = FALSE) %>%
+  
+    group_by(tf) %>%
+    mutate(pos = as.numeric(pos) + 1, scaled = scale(total_contib)) %>%
+    select(-c(family, total_contib, fileid)) %>% # Clean up extra columns
+    pivot_wider(names_from = pos, values_from = scaled, values_fill = 0) %>% 
+    column_to_rownames("tf") 
+
+
+
+# Plotting code (should now work if hd_map has data)
+if (nrow(hd_map) > 0) {
+  
+  y = max(hd_map, na.rm = TRUE)
+
+  h <- ComplexHeatmap::Heatmap(
+      hd_map,
+      na_col = "white",
+      cluster_columns = FALSE,
+      show_row_dend = FALSE,
+      col = colorRamp2(c(0, y), c("white", "#ae3918")),
+      heatmap_legend_param = list(title = "DNA-Flexibility", direction = "horizontal"),
+      row_names_side = "left",
+      border = TRUE
+  )
+  
+  draw(h, column_title = "Homeodomain", heatmap_legend_side = "bottom")
+  
+} else {
+  # This message will print in your console if something is still wrong
+  message("Warning: The 'hd_map' data frame is empty after processing. No heatmap was drawn.")
+}
+  
+dev.off()
+```
+
+Figure 4B
+```{r}
+
+taat_tfs <- read_tsv('../METADATA/MWORDS_homedomain_TAAT_factors_10bp.tsv', col_names = F) %>% pull("X1")
+taat_factors <- stringr::str_extract(taat_tfs, "(?<=_)[^_]+")
+
+
+# Loop through each feature and family
+for (feat in c('DNaseI', 'NPP', 'twistDisp', 'trxDi', 'stiffness')){
+  for (fam in "homeodomain"){
+    
+    print(paste0("Current feature is: ", feat, " and family is: ", fam))
+    
+    # This part of your code is correct
+    contribution_per_position <- mlr_pp_cv %>%
+      filter(fileid %in% taat_tfs) %>%
+      mutate(features = str_remove_all(features, "\\(|\\)|'") %>%
+               str_replace("^1mer,\\s*", "") %>%
+               trimws(),
+             features = ifelse(features == "", "1mer", features)) %>%
+      filter(features == "1mer" | features == {{feat}}) %>%
+      select(fileid, pos, features, r2_test) %>% 
+      group_by(fileid, pos, features) %>% 
+      summarise(mean_r2_test_over_1ofold = mean(r2_test, na.rm = TRUE), .groups = "drop") %>% 
+      group_by(fileid) %>%
+      mutate(
+        baseline_r2 = mean_r2_test_over_1ofold[features == "1mer"],
+        delta_r2_ratio = ((mean_r2_test_over_1ofold - baseline_r2) / baseline_r2) * 100
+      ) %>%
+      ungroup() %>%
+      filter(features == {{feat}}) %>%
+      tidyr::extract(fileid, into = c("family", "tf"), regex = "([^_]+)_([^_]+).*", remove = FALSE) %>%
+      filter(family == {{fam}})
+
+    if (nrow(contribution_per_position) == 0) {
+      print(paste("No data for", fam, "and", feat, ". Skipping."))
+      next
+    }
+
+    # --- HEATMAP DATA SHAPING ---
+    hh_map <- contribution_per_position %>%
+      filter(!tf %in% c("NKX3", "NKX6")) %>%
+      
+      # !!! THIS IS THE CORRECTED LINE !!!
+      # Use the vector of short TF names (`taat_factors`) for the filter.
+      filter(tf %in% taat_factors) %>%
+      
+      # The rest of the chain
+      group_by(tf, pos) %>%
+      summarise(mean_delta_r2 = mean(delta_r2_ratio, na.rm = TRUE), .groups = "drop") %>%
+      group_by(tf) %>%
+      mutate(pos = as.numeric(pos) + 1,
+             scaled = scale(mean_delta_r2)) %>%
+      ungroup() %>%
+      select(tf, pos, scaled) %>%
+      pivot_wider(names_from = pos, values_from = scaled, values_fill = 0) %>%
+      column_to_rownames("tf")
+
+    if (nrow(hh_map) == 0) {
+        print(paste("No TFs left for", fam, "after final filtering. Skipping."))
+        next
+    }
+    
+    # --- PLOTTING ---
+    # This part should now work correctly
+    filepath <- paste0("../FIGURES/Figure4/", 
+                       "Figure_4B_delta_r_squared_position_", fam, "_", feat, ".png")
+    # Make sure the directory exists
+    dir.create("FIGURES/Figure4/", showWarnings = FALSE, recursive = TRUE)
+    
+    png(filename = filepath, res = 300, height = 5000, width = 1200)
+    
+    y <- max(hh_map, na.rm = TRUE)
+    x <- 0 
+    
+    color_ranges <- list(
+        DNaseI = colorRamp2(c(x, y), c("white", "#027ab0")),
+        NPP = colorRamp2(c(x, y), c("white", "#49997c")),
+        twistDisp = colorRamp2(c(x, y), c("white", "#1ebecd")),
+        trxDi = colorRamp2(c(x, y), c("white", "#d19c2f")),
+        stiffness = colorRamp2(c(x, y), c("white", "red"))
+    )
+    
+    h <- ComplexHeatmap::Heatmap(hh_map, 
+                                 na_col = "white",
+                                 cluster_columns = FALSE,
+                                 show_row_dend = FALSE,
+                                 col = color_ranges[[feat]],
+                                 heatmap_legend_param = list(title = feat, direction = "horizontal"),
+                                 row_names_side = "left",
+                                 border = TRUE)
+                      
+    draw(h, column_title = fam, heatmap_legend_side = "bottom")
+    dev.off()
+    
+    print(paste("Successfully generated plot:", filepath))
+  }
+}
+```
+
+Figure 4C
+```{r}
+
+# # Define the color ranges for each feature
+color_ranges <- list(
+  DNaseI = c("#027ab0", "#e8e1e1"),
+  NPP = c("#49997c", "#e8e1e1"),
+  twistDisp = c("#1ebecd", "#e8e1e1"),
+  trxDi = c("#d19c2f", "#e8e1e1"),
+  stiffness = c("red", "#e8e1e1")
+)
+
+
+# setwd("/SynologyNAS/001_Thesis_work/Prj_TF_FAMILY_SPECIFIC/GITHUB_REPO/")
+
+for (f in c("DNaseI", "NPP", "twistDisp", "trxDi", "stiffness")) {
+  
+  
+  filen = paste0("../DATA/04_POSITIONAL_IMPORTANCE/homeodomain_MSX1_TGCGAA30NAGC_TAAT_10_5_", f, "_0.tsv")
+  
+  p <- read_tsv(filen, col_names = c("id", 1:9)) %>% 
+    separate(id, into = c(NA, "aff", NA), sep = "__") %>% 
+    mutate(aff = as.numeric(aff)) %>% 
+    mutate(tile = paste0("tile", ntile(aff, n = 10))) %>% 
+    select(-aff) %>% 
+    pivot_longer(!tile, names_to = "pos", values_to = "feat") %>%  
+    group_by(tile, pos) %>% 
+    summarize(meanf = mean(feat), .groups = 'drop') %>% 
+    mutate(pos = factor(pos, levels = as.character(1:9))) %>% 
+    mutate(tile = factor(tile, levels = paste0("tile", 1:10)))   # Ensure correct ordering of tiles
+  
+  # Create a color scale for the tiles
+  tile_colors <- colorRampPalette(color_ranges[[f]])(10)
+  names(tile_colors) <- levels(p$tile)
+  
+  pp <- ggplot(p, aes(x = pos, y = meanf, group = tile, color = tile)) +
+    geom_line(size = 1.4) +
+    scale_color_manual(values = (tile_colors)) +
+    theme_bw(base_size = 26) +
+    labs(color = "Tile", x = "Position", y = f) + 
+    theme(legend.position = "top")
+  
+  outfname = paste0("../FIGURES/Figure4/Figure_4C_MSX1_profile_", f, ".png")
+  
+  ggsave(pp, filename = outfname, dpi = 300, height = 10, width = 10)
+  print(paste0("file saved to: ", outfname))
+}
+```
+
+Supplementary Figure 3A
+```{r}
+# --- (SETUP CODE IS THE SAME) ---
+library(tidyverse)
+library(ggsci)
+library(circlize) 
+
+tf_families <-  c("bHLH", "bZIP", "C2H2", "CENPB", "CP2", "CUT", "ETS", 
+                  "forkhead", "GATA", "GCM", "HSF", "IRF", 
+                  "MAD", "MEIS", "MYB", "NFAT", "NFI", "nuclearreceptor", "homeodomain", 
+                  "PAX", "POU", "PROX", "RRM", "RUNX", "SAND", "TBX", "TEA")
+
+
+# set colors
+d3_colors <- pal_d3("category20")(20)
+family_color_map <- rep(d3_colors, length.out = length(tf_families))
+names(family_color_map) <- tf_families
+
+
+# loop over families
+for (fam in tf_families) {
+  
+  print(paste("--- Starting processing for family:", fam, "---"))
+  
+  output_filename <- paste0("../FIGURES/Figure4/Supple_Figure_3A_", fam, "_contribution_heatmap.png")
+  plot_title <- fam
+  
+  hd_map <- mlr_pp_cv %>%
+    tidyr::separate(fileid, into = c("family", "tf"), sep = "_", extra = "drop", remove = FALSE) %>%
+    filter(family == {{fam}}) %>%
+    
+    ungroup() %>% 
+    
+    mutate(features = str_remove_all(features, "\\(|\\)|'") %>%
+             str_replace("^1mer,\\s*", "") %>%
+             trimws(),
+           features = ifelse(features == "", "1mer", features)) %>% 
+           
+    select(fileid, tf, pos, features, r2_test) %>%
+    group_by(fileid, tf, pos, features) %>%
+    
+    # Using summarise is cleaner here than mutate
+    summarise(mean_r2_test_over_1ofold = mean(r2_test), .groups = "drop") %>% 
+    
+    group_by(fileid, tf) %>%
+    mutate(delta_r2 = ((mean_r2_test_over_1ofold - mean_r2_test_over_1ofold[features == "1mer"]) / mean_r2_test_over_1ofold[features == "1mer"]) * 100) %>% 
+    ungroup() %>%
+    
+    filter(features != "1mer") %>% 
+    
+    group_by(fileid, tf, pos) %>%
+    summarise(total_contib = sum(delta_r2), .groups = "drop") %>%
+    
+    
+    # After all calculations involving `fileid` are done, we explicitly
+    # select ONLY the columns needed for the heatmap. This drops `fileid`.
+    select(tf, pos, total_contib) %>% 
+    
+    # The rest of the pipeline will now work correctly
+    group_by(tf) %>%
+    mutate(pos = as.numeric(pos) + 1, scaled = scale(total_contib)) %>%
+    select(-total_contib) %>% 
+    pivot_wider(names_from = pos, values_from = scaled, values_fill = 0) %>% 
+    column_to_rownames("tf") 
+
+  # --- PLOTTING  ---
+  if (nrow(hd_map) > 0) {
+    png(filename = output_filename, res = 300, height = 5000, width = 1200)
+    
+    # This call will now succeed because hd_map is purely numeric
+    y = max(hd_map, na.rm = TRUE)
+    
+    current_color <- family_color_map[fam]
+    h <- ComplexHeatmap::Heatmap(
+        hd_map, na_col = "white", cluster_columns = FALSE, show_row_dend = FALSE,
+        col = colorRamp2(c(0, y), c("white", current_color)),
+        heatmap_legend_param = list(title = "DNA-Flexibility", direction = "horizontal"),
+        row_names_side = "left", border = TRUE
+    )
+    draw(h, column_title = plot_title, heatmap_legend_side = "bottom")
+    dev.off()
+    print(paste("Successfully created heatmap for", fam, "at:", output_filename))
+  } else {
+    print(paste("Warning: The data frame for family '", fam, "' was empty. No heatmap was drawn.", sep=""))
+  }
+}
+
+print("--- All families processed. ---")
+```
+
+Supplementary Figure 3B (Panel A)
+```{r}
+
+msx_boxplots <- list()
+
+
+for (f in c("DNaseI", "NPP", "twistDisp", "trxDi", "stiffness")){
+  
+  filen = paste0("../DATA/04_POSITIONAL_IMPORTANCE/homeodomain_MSX1_TGCGAA30NAGC_TAAT_10_5_", f, "_0.tsv")
+  
+  print(paste0("Loading data from ", filen))
+  
+  x <-  read_tsv(filen, col_names = F, show_col_types = F) %>% column_to_rownames("X1") %>% rowMeans()
+  # head(x)
+  
+  
+  p <- data.frame(x) %>% 
+    rownames_to_column("id") %>% 
+    separate(id, into = c(NA, "aff", NA), sep = "__") %>% 
+    mutate(tile = paste0("tile", ntile(x, n = 4))) %>% 
+    mutate(tile = factor(tile, levels = paste0("tile", 1:4))) %>% # x increase from tile 1 to n
+
+    ggplot(., aes(x = tile, y = as.numeric(aff), color = tile)) +
+    geom_boxplot() +
+    theme_bw(base_size = 20) +
+    scale_color_manual(values = colorRampPalette(color_ranges[[f]])(4)) +
+    theme(legend.position = "top") +
+          # axis.ticks.x = element_blank(),
+          # axis.text.x = element_blank()) +
+    ylab("Affinity") +
+    xlab("tiles") +
+    ggtitle({{f}})
+
+  
+    msx_boxplots[[f]] <- p
+    print(paste0("Done for ", f))
+  
+}
+
+
+
+ggpubr::ggarrange(plotlist = msx_boxplots, common.legend = T) %>%
+  ggsave(., filename = "../FIGURES/Figure4/Supple_Figure_MSX1_3B_MSX_affinity_boxplots_combined.png",
+         dpi = 300, width = 10)
+
+
+
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+

@@ -1,0 +1,372 @@
+---
+title: "L2-MLR-gcPBM-Figure3"
+output: html_document
+date: "2025-08-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+upbm_l2_updated <- read_tsv("DATA/03_L2MLR_PBM/uPBM_updated_res.tsv")
+gcPBM <- read_csv("/SynologyNAS/001_Thesis_work/Prj_TF_FAMILY_SPECIFIC/RESULTS/MLR_L2_features_merged_interaction_gcPBM.tsv")
+```
+
+
+```{r}
+
+gcPBM <- gcPBM %>% 
+ mutate(features = str_remove_all(features, "\\(|\\)|'|,")) %>% 
+  group_by(fileid, pos, features) %>% 
+  mutate(mean_r2_over10fold = mean(r2_test)) %>%   
+  ungroup()   %>% 
+  mutate(features = str_replace_all(features, 
+                                    "1mer DNaseI NPP twistDisp trxDi stiffness",
+                                    "1mer + Flexibility")) %>% 
+  
+  select(pos, fileid, features, mean_r2_over10fold) %>%
+  distinct() %>% 
+  mutate(dataset = "gcPBM") 
+
+```
+
+Figure 3A
+```{r}
+
+pbm_dotplot <- upbm_l2_updated %>%  
+  filter(r2_test > 0) %>% 
+  group_by(fileid, pos, features) %>% 
+  mutate(mean_r2_over10fold = mean(r2_test)) %>% 
+  select(fileid, features, mean_r2_over10fold) %>% 
+  ungroup() %>% 
+  distinct() %>% 
+  mutate(features = str_remove_all(features, "\\(|\\)|'|,")) %>% 
+  mutate(features = str_replace_all(features, 
+                                    "1mer DNaseI twistDisp NPP stiffness trxDi",
+                                    "1mer + Flexibility")) %>% 
+  mutate(dataset = "uPBM")  %>% 
+  rbind(gcPBM) %>% 
+
+  select(-pos) %>% 
+  # group_by(fileid, dataset) %>% 
+  # summarise(n = n())
+
+  pivot_wider(id_cols = c(fileid, dataset), 
+            names_from = features, 
+            values_from = mean_r2_over10fold) %>% 
+
+
+  # separate(fileid, into = c("TF", NA, "sample", "platform")) %>%   
+  ggplot(., aes(x = `1mer`, y = `1mer + Flexibility`, color = dataset)) +
+  geom_point(size = 4, alpha = 0.8) +
+  theme_bw(base_size = 25) +
+  scale_x_continuous(limits = c(0,1)) +
+  scale_y_continuous(limits = c(0,1)) +
+  geom_abline(intercept = 0, linetype = "dashed") +
+  theme(legend.position = c(0.8, 0.3)) +
+  scale_color_futurama()
+
+
+
+
+pbm_dotplot %>% 
+  ggsave(., filename = "FIGURES/Figure3/Figure3A.png",
+         dpi = 300, height = 10, width = 12)
+```
+
+Figure  3B
+```{r}
+
+options(scipen = 0)
+
+gcPBM_dir = "DATA/03_L2MLR_PBM/"
+
+
+
+#-----------------------------------------------
+# Load the model predictions with 1mer model
+# ----------------------------------------------
+
+# load all dataframes
+seq_models <- c("Mad", "Max", "Myc") %>% 
+  map(., .f = ~ read_tsv(paste0(gcPBM_dir, .x, "_1mer_actual_and_predicted.tsv")))
+
+# aggregate obs
+seq_model_results <- seq_models %>% purrr::reduce(., .f = rbind)
+
+
+
+#-------------------------------------------------------
+# Load the model predictions with 1mer+flexibility model
+# -----------------------------------------------------
+
+flex_models <- c("Mad", "Max", "Myc") %>% 
+  map(., .f = ~ read_tsv(paste0(gcPBM_dir, .x, "_1mer_Flex_actual_and_predicted.tsv")))
+
+flex_model_results <- flex_models %>% purrr::reduce(., .f = rbind)
+
+
+
+
+
+
+gcPBM_corr_plots <- rbind(seq_model_results, flex_model_results)  %>% 
+  mutate(model = str_replace_all(model, "1mer_Flex", "1mer + Flexibility")) %>% 
+  # pull(model) %>% 
+  ggplot(., aes(x = actual, 
+                y = predicted, 
+                color = model)) +
+  
+  geom_point(size = 1, alpha = 0.6) +
+  stat_smooth(method = "lm")+
+  facet_wrap(~tf, scales = "free") +
+  theme_bw(base_size = 20) +
+  
+  ggpubr::stat_cor(aes(label = ..r.label..), 
+                   method = "pearson", 
+                   show.legend = F, 
+                   size = 7,
+                   digits = 2
+                   ) +  
+  
+  labs(x= "Obsereved affintiy (gcPBM data)",
+       y = "Predicted affinity (gcPBM model)") +
+  ggsci::scale_color_d3() +
+  theme(legend.position = "top")
+
+
+# gcPBM correlatuion plots
+gcPBM_corr_plots %>%  
+  ggsave(., filename = "FIGURES/Figure3/Figure3B.png", width = 8, height = 6, dpi = 300)
+
+
+```
+
+
+Figure 3C
+```{r}
+
+
+
+Max_gcPBM_vary_sample <- read_csv("DATA/03_L2MLR_PBM/Max_complexity_varying_sampleSize.csv") %>% 
+  mutate(features = str_remove_all(features, "\\(|\\)|'|,")) %>% 
+  mutate(features = str_replace_all(features, 
+                                    "1mer DNaseI twistDisp NPP stiffness trxDi",
+                                    "1mer + Flexibility")) %>% 
+  select(-pos) %>% 
+  group_by(fileid, features, sample_size) %>%
+  mutate(mean_r2 = mean(r2_test),
+         min_r2 = min(r2_test),
+         max_r2 = max(r2_test)) %>%
+  select(fileid, features, sample_size, r2_test, min_r2, max_r2) %>% 
+  distinct()  %>% 
+  mutate(model = features) %>% 
+  ggplot(., aes(x = factor(sample_size, 
+                           levels = c('8568', '4284', '2142', '1071', '536')),
+                
+                y = r2_test, 
+                color = model)
+         ) +
+  geom_errorbar(aes(ymin = min_r2,
+                      ymax = max_r2),
+                width = 0.1,
+                  # size = 0.4,
+                  # size = 3,
+                  fill="white",
+                  # shape=22,
+                  alpha = 0.6) +
+  
+  
+  
+  # geom_point(shape = 21) +
+  # geom_line() +
+  stat_summary(fun = mean, 
+               geom = "line",
+               aes(group = features), 
+               size = 2) +
+  
+  
+  
+  theme_bw(base_size = 28) +
+  scale_color_d3() +
+  xlab("Sample size") +
+  ylab(bquote(R^2)) +
+  theme(legend.position = c(0.3, 0.2)) 
+
+
+
+Max_gcPBM_vary_sample %>% 
+  ggsave(., filename = "FIGURES/Figure3/Figure3C.png", dpi = 300, height = 10, width = 10)
+
+```
+
+Figure 3D
+```{r}
+
+options(scipen = 0)
+
+onemer_model <- read_csv('DATA/03_L2MLR_PBM/Max_1mer_predictions.csv') %>% 
+  mutate(model = "1mer")
+
+
+onemer_flex_model <- read_csv('DATA/03_L2MLR_PBM/Max_1mer_Flex_predictions.csv') %>% 
+  mutate(model = "1mer + Flexibility")
+
+
+
+MAX_gcPBM_model_on_SELEX <- rbind(onemer_model, onemer_flex_model) %>% 
+  ggplot(., aes(x = Actual_Rank, Predicted_Rank, color = model)) +
+  geom_point(alpha = 0.8) +
+  stat_smooth(method = "lm") +
+  ggpubr::stat_cor(method = "spearman",
+                   cor.coef.name = "rho",
+                   show.legend = F,
+                   geom = "text", size = 10) +
+  theme_bw(base_size = 24) +
+  theme(legend.position = "top") +
+  scale_color_d3() +
+  labs(x = "Predicted rank (from gcPBM model)",
+       y = "Observed rank (SELEX-seq dataset)")
+
+
+
+
+MAX_gcPBM_model_on_SELEX %>% 
+  ggsave(., filename = "FIGURES/Figure3/Figure3D.png", dpi = 300, height = 10, width = 10)
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+

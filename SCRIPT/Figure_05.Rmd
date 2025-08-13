@@ -1,0 +1,604 @@
+---
+title: "Figure5"
+output: html_document
+date: "2025-08-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+
+library(tidyverse)
+
+
+
+encode_xgb_df <- read_tsv('../RESULTS/05_GENOMIC_CLASSIFICATION/Encode_nestedCV_XGB.tsv')
+encode_fam <- read_tsv("../RESULTS/05_GENOMIC_CLASSIFICATION/ENCODE_TF_FAMILY_INFO.tsv")
+
+```
+
+set colors for TF family
+```{r}
+
+fam_color <- c(ggsci::pal_d3(palette = c("category20"))(20), 
+  ggsci::pal_d3(palette = c("category20b"))(20) %>% rev()
+)
+```
+
+Figure 1A
+```{r}
+valid_thr_mcc = 0.005
+
+
+encode_xgb_wide <- encode_xgb_df %>%
+  
+  select(- best_params)  %>% 
+  mutate(features = ifelse(features == '1mer', "1mer", "1mer + Flexibility"))  %>% 
+  
+  
+  # mean over 10 fold for each dataset
+  group_by(tf, cell_line, features) %>% 
+  summarise(mean_mcc = mean(mcc)) %>% 
+
+  # 
+  ungroup() %>%  
+  pivot_wider(names_from = features, values_from = mean_mcc) 
+
+  
+  
+
+  
+encode_xgb_df_valid <- encode_xgb_wide %>% 
+  
+  mutate(difference =  `1mer` - `1mer + Flexibility`, 
+         validity = ifelse(difference > valid_thr_mcc, "invalid", "valid"))  %>% 
+  
+  filter(validity == "valid")
+
+
+
+
+total_points <- encode_xgb_df_valid %>% nrow()
+```
+
+
+```{r}
+
+encode_xgb_valid_plot_mcc <- encode_xgb_df_valid %>%
+  
+  left_join(encode_fam) %>% 
+ 
+  
+  ggplot(., aes(x = `1mer`, y = `1mer + Flexibility`, color = family)) +
+  # Add label
+  
+  geom_point(size = 4) +
+  theme_bw(base_size = 24) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  geom_abline(linetype = "dashed") +
+  annotate("text", 
+           x = 0.6, y = 1, 
+           label = paste("N = ", total_points),
+           color = "black", size = 12) +
+  
+  scale_color_manual(values = fam_color) +
+  theme(legend.position = c(0.75, 0.25), 
+        legend.text = element_text(size = 14)) +
+  xlab("MCC (1mer)") +
+  ylab("MCC (1mer + Flexibility)")
+```
+
+
+```{r}
+encode_xgb_valid_plot_mcc %>% 
+  ggsave(., filename = "../FIGURES/Figure5/Figure_5A.png", width = 12, height = 12)
+```
+
+```{r}
+# encode_xgb_df_valid %>% pull(tf) %>% unique() %>% length()
+```
+
+
+Figure 5B
+```{r}
+# Define validation thresholds at the top for clarity
+valid_thr_mcc <- 0.005
+
+# --- Step 1: Identify and Filter Per-Cell-Line Data ---
+
+# First, create the wide data frame with one row per TF-cell line pair
+encode_xgb_wide_per_cell <- encode_xgb_df %>%
+  select(-best_params) %>%
+  mutate(features = ifelse(features == '1mer', "1mer", "1mer + Flexibility")) %>%
+  group_by(tf, cell_line, features) %>%
+  summarise(mean_mcc = mean(mcc, na.rm = TRUE), .groups = 'drop') %>%
+  pivot_wider(names_from = features, values_from = mean_mcc)
+
+# Now, filter these individual TF-cell line pairs based on the validity check.
+# This data frame will contain ALL valid experiments.
+valid_experiments <- encode_xgb_wide_per_cell %>%
+  mutate(
+    difference = `1mer` - `1mer + Flexibility`,
+    validity = ifelse(difference > valid_thr_mcc, "invalid", "valid")
+  ) %>%
+  filter(validity == "valid" & !is.na(validity))
+
+# --- Step 2: Aggregate the Filtered Data for Plotting ---
+
+# Now that we have only the valid experiments, we can average them for each TF.
+# This gives us a single point per TF for the plot.
+data_for_plot <- valid_experiments %>%
+  # Group by TF only
+  group_by(tf) %>%
+  # Calculate the mean of the remaining, valid experiments for each TF
+  summarise(
+    `1mer` = mean(`1mer`, na.rm = TRUE),
+    `1mer + Flexibility` = mean(`1mer + Flexibility`, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# --- Step 3: Generate the Plot ---
+# The total number of points will now be the number of unique TFs with at least one valid run.
+total_points <- nrow(data_for_plot)
+
+# The rest of the plotting code remains the same, just with the new input data
+encode_xgb_plot_per_tf <- data_for_plot %>%
+  
+  # The join key is "tf"
+  left_join(encode_fam, by = "tf") %>% 
+  
+  ggplot(aes(x = `1mer`, y = `1mer + Flexibility`, color = family)) +
+  geom_point(size = 4, alpha = 0.8) +
+  geom_abline(linetype = "dashed", color = "grey40") +
+  
+  # The annotation will now correctly show N = 180
+
+  annotate("text", 
+           x = 0.6, y = 1, 
+           label = paste("N = ", total_points),
+           color = "black", size = 12) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  
+  # Make sure `fam_color` is loaded and formatted correctly
+  scale_color_manual(values = fam_color, name = "TF Family") + 
+  
+  theme_bw(base_size = 24) +
+  theme(
+    legend.position = "none",
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 16)
+  ) +
+  labs(
+    x = "MCC (1-mer model)",
+    y = "MCC (1-mer + Flexibility model)"
+  )
+```
+
+
+```{r}
+# To display the plot
+encode_xgb_plot_per_tf %>% 
+  ggsave(., filename = "../FIGURES/Figure5/Figure_5B.png")
+```
+
+Figure 5C
+```{r}
+
+(encode_xgb_df_valid %>% 
+  left_join(encode_fam) %>%
+
+ 
+  mutate(delta = (`1mer + Flexibility` - `1mer`),
+         dataset = paste(tf, "__", cell_line)) %>% 
+  ggplot(., aes(x = reorder(dataset, delta), y = delta)) +
+  geom_point() +
+  theme_bw(base_size = 22, base_line_size = 0) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.length = unit(0, "cm"))  +
+  xlab("Dataasets") +
+  ylab("MCC (1mer + DNA Flexibility)\n - MCC(1mer)")
+) %>% 
+  
+  ggsave(., filename = "../FIGURES/Figure5/Figure_5C.png")
+```
+
+Figure 5D
+
+Calculate the odds-ratio, do a fisher-exact test on contingency table, and Mann-Whitney test on the 1mer+flexibility vs 1mer model performance for each family
+```{r}
+# --- 1. SETUP: Load Required Libraries ---
+# Make sure you have these packages installed
+library(dplyr)
+library(tidyr)
+library(readr)
+library(purrr) # Used for map_dfr for a clean workflow
+
+# --- 2. DATA PREPARATION ---
+
+# Set the validity threshold for model performance
+valid_thr_mcc <- 0.005
+
+# Load your data (uncomment these lines and point to your files)
+# encode_xgb_df <- read_tsv("Encode_nestedCV_XGB.tsv")
+# encode_fam <- read_tsv("ENCODE_TF_FAMILY_INFO.tsv")
+
+# Preprocess, reshape, and filter for valid experiments
+encode_xgb_wide <- encode_xgb_df %>%
+  mutate(features = ifelse(features == "1mer", "1mer", "1mer + Flexibility")) %>%
+  group_by(tf, cell_line, features) %>%
+  # Use median for robustness to outliers in MCC scores across folds
+  summarise(median_mcc = median(mcc), .groups = "drop") %>%
+  pivot_wider(names_from = features, values_from = median_mcc) %>%
+  # Sanity check: remove experiments where adding features caused a large drop in performance
+  mutate(difference = `1mer` - `1mer + Flexibility`,
+         validity = ifelse(difference > valid_thr_mcc, "invalid", "valid")) %>%
+  filter(validity == "valid")
+
+# Merge with family info and create the response variables for testing
+df_valid_fam <- encode_xgb_wide %>%
+  left_join(encode_fam, by = "tf") %>%
+  # Crucial step: remove TFs that did not have a family assignment
+  filter(!is.na(family)) %>%
+  # Calculate the change in MCC and a binary 'improved' variable
+  mutate(delta_mcc = `1mer + Flexibility` - `1mer`,
+         improved = delta_mcc > 0)
+
+# --- 3. STATISTICAL ANALYSIS ---
+
+# == Analysis 1: Odds Ratio for Enrichment of Improvement ==
+
+# Define a function to compute the corrected odds ratio and Fisher's test p-value
+compute_odds_ratio <- function(df, family_name) {
+  # Create a 2x2 contingency table: [family vs. others] x [improved vs. not]
+  in_fam <- df %>% filter(family == family_name)
+  out_fam <- df %>% filter(family != family_name)
+  
+  a <- sum(in_fam$improved)       # In family, improved
+  b <- nrow(in_fam) - a           # In family, not improved
+  c <- sum(out_fam$improved)      # Others, improved
+  d <- nrow(out_fam) - c          # Others, not improved
+  
+  # Calculate odds ratio with Haldane-Anscombe correction for stability
+  odds_ratio <- ((a + 0.5)/(b + 0.5)) / ((c + 0.5)/(d + 0.5))
+  
+  # Perform Fisher's Exact Test to get a p-value for the enrichment
+  test <- fisher.test(matrix(c(a, b, c, d), nrow = 2))
+  
+  tibble(
+    family = family_name,
+    odds_ratio_corrected = odds_ratio,
+    p_value_fisher = test$p.value
+  )
+}
+
+# Apply the function to every family and correct for multiple testing
+odds_ratio_results <- df_valid_fam %>%
+  distinct(family) %>%
+  pull(family) %>%
+  map_dfr(~compute_odds_ratio(df_valid_fam, .x)) %>%
+  # Add the False Discovery Rate (FDR) column
+  mutate(fdr_fisher = p.adjust(p_value_fisher, method = "BH"))
+
+
+# == Analysis 2: Mann-Whitney U-Test for Magnitude of Change ==
+# Perform a one-sample Wilcoxon test for each family against mu=0
+mann_whitney_results <- df_valid_fam %>%
+  group_by(family) %>% 
+  summarise(
+    # The test checks if the median delta_mcc is significantly different from zero
+    p_value_mann_whitney = tryCatch({
+      wilcox.test(delta_mcc, alternative = "two.sided")$p.value
+    }, error = function(e) NA_real_), # Gracefully handle errors for small groups
+    .groups = "drop"
+  ) %>%
+  # Add the False Discovery Rate (FDR) column for these tests as well
+  mutate(fdr_mann_whitney = p.adjust(p_value_mann_whitney, method = "BH"))
+
+
+# --- 4. COMBINE RESULTS AND FINALIZE ---
+
+# Join the results from both analyses into a single data frame
+final_results <- odds_ratio_results %>% 
+  left_join(mann_whitney_results, by = "family") %>%
+  # Arrange the final table by the most interesting metrics for easy interpretation
+  arrange(fdr_fisher, fdr_mann_whitney)
+
+# View the final, comprehensive results table
+print(final_results)
+
+# You can now use this `final_results` data frame for plotting or export
+# write_tsv(final_results, "family_enrichment_and_magnitude_results.tsv")
+```
+
+
+
+Figure 5D (Top panel enrichment dotplot)
+```{r}
+
+ordered_family_by_or <- final_results %>% 
+  arrange(odds_ratio_corrected) %>% 
+  pull(family)
+
+
+
+enrichment_dotplot <-final_results %>%
+   mutate(
+    # **THE FIX for ordering**: Convert 'family' to a factor with the desired levels
+    family = factor(family, levels = ordered_family_by_or)
+  ) %>%
+  ggplot(., aes(x = family, 
+                y = odds_ratio_corrected, 
+                size = -log10(p_value_mann_whitney), 
+                color = p_value_fisher)) +
+  geom_point(alpha = 0.8) + # Using alpha makes overlapping points clearer
+  
+  # --- Color Scale (Unchanged) ---
+  scale_color_gradient2(
+    name = "Fisher Test p-value",
+    low = "firebrick",
+    mid  = "white",
+    high = "steelblue",
+    midpoint = 0.5,
+    limits = c(0, 1)
+  ) +
+  
+  # --- Size Scale (INCREASED RANGE) ---
+  scale_size_continuous(
+    name = "Significance of ΔMCC\n(-log10 adj. p-value)", # Corrected label to P-value from FDR
+    range = c(3, 10) # Increase the min (4) and max (15) size of the dots
+  ) +
+  
+  # --- Theme and Labs ---
+  theme_bw(base_size = 22) +
+  labs(
+    x = "TF Family",
+    y = "Odds Ratio"
+  ) +
+  
+  # --- LEGEND AND AXIS MODIFICATIONS ---
+  theme(
+    # Keep the x-axis text rotated
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    
+    # --- Legend Placement and Styling ---
+    # 1. Move legend inside the plot area to the top-left
+    legend.position = c(0.05, 0.95), 
+    legend.justification = c("left", "top"),
+    legend.box = "horizontal",
+  
+  ) + 
+  guides(
+    color = guide_colorbar(
+      title.position = "top", 
+      title.hjust = 0.5, 
+      direction = "horizontal",
+       label.theme = element_text(angle = 45, vjust = 1, hjust = 1)
+    ),
+    
+    
+    size = guide_legend(
+      title.position = "top",
+      title.hjust = 0.5,
+      nrow = 2
+    )
+  )
+
+
+
+```
+
+Figure 5D (Bottom panel)
+```{r}
+
+
+# --- CREATE THE TOP BOXPLOT PANEL (p1) ---
+family_wise_bxplt <- encode_xgb_df_valid %>% 
+  left_join(encode_fam, by = "tf") %>% 
+  
+  # We need to filter out families with no data before applying the factor
+  filter(!is.na(family)) %>%
+  
+  mutate(
+    delta_mcc = (`1mer + Flexibility` - `1mer`) * 100,
+    
+    # **THE FIX for ordering**: Convert 'family' to a factor with the desired levels
+    family = factor(family, levels = ordered_family_by_or)
+  ) %>%
+  
+
+
+  ggplot(., aes(x = family, y = delta_mcc)) +
+  geom_boxplot(aes(color = family), outlier.shape = NA, alpha = 0.5) + # Made outliers invisible
+  geom_jitter(width = 0.2, alpha = 0.6, aes(color = family)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  
+  theme_bw(base_size = 18) +
+  
+
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+    # axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  
+  scale_color_manual(values = fam_color) + # Assumes `fam_color` map exists
+  labs(x = NULL, y = expression(paste(Delta, " MCC (%)"))) # Added (%) to y-axis
+
+# You can print this plot to check it
+print(family_wise_bxplt)
+
+
+```
+
+Merge boxplot and dotplot
+```{r}
+(family_wise_bxplt / enrichment_dotplot) 
+  ggsave(., filename = "../FIGURES/Figure5/Figure_5D.png", dpi = 400, width = 15, height = 10)
+```
+
+
+
+Supplementary Figure 5A
+```{r}
+valid_thr_auc = 0.005
+
+
+encode_xgb_wide_auc <- encode_xgb_df %>%
+  
+  select(- best_params)  %>% 
+  mutate(features = ifelse(features == '1mer', "1mer", "1mer + Flexibility"))  %>% 
+  
+  
+  # mean over 10 fold for each dataset
+  group_by(tf, cell_line, features) %>% 
+  summarise(mean_auc = mean(auc_roc)) %>% 
+
+  # 
+  ungroup() %>%  
+  pivot_wider(names_from = features, values_from = mean_auc) 
+
+  
+  
+
+  
+encode_xgb_df_valid_auc <- encode_xgb_wide_auc %>% 
+  
+  mutate(difference =  `1mer` - `1mer + Flexibility`, 
+         validity = ifelse(difference > valid_thr_auc, "invalid", "valid"))  %>% 
+  
+  filter(validity == "valid")
+
+
+
+
+total_points_auc <- encode_xgb_df_valid_auc %>% 
+  filter(`1mer` > 0.5, `1mer + Flexibility` > 0.5) %>% 
+  nrow()
+    
+
+
+
+
+encode_xgb_valid_plot_auc <- encode_xgb_df_valid_auc %>%
+  
+  left_join(encode_fam) %>% 
+ 
+  
+  ggplot(., aes(x = `1mer`, y = `1mer + Flexibility`, color = family)) +
+  # Add label
+  
+  geom_point(size = 4) +
+  theme_bw(base_size = 24) +
+  scale_x_continuous(limits = c(0.5, 1)) +
+  scale_y_continuous(limits = c(0.5, 1)) +
+  geom_abline(linetype = "dashed") +
+  annotate("text", 
+           x = 0.6, y = 1, 
+           label = paste("N = ", total_points_auc),
+           color = "black", size = 12) +
+  
+  scale_color_manual(values = fam_color) +
+  theme(legend.position = c(0.75, 0.25), 
+        legend.text = element_text(size = 14)) +
+  xlab("AUC (1mer)") +
+  ylab("AUC (1mer + Flexibility)")
+```
+
+
+```{r}
+encode_xgb_valid_plot_auc %>% 
+  ggsave(., filename = "../FIGURES/Figure5/Supple_Figure_5A.png",  width = 12, height = 12)
+```
+
+Supplementary Figure 5B
+```{r}
+# Convert to a wide matrix
+heat_matrix <- df_heat %>%
+  pivot_wider(names_from = col, values_from = delta_mcc, id_cols = row) %>%
+  # ComplexHeatmap works best with row names
+  tibble::column_to_rownames("row") %>%
+  as.matrix()
+
+
+
+# Step 1: Get the order for the columns (Cell Lines)
+# Same logic as your script: count peaks per cell line
+peak_info <- df_heat %>%
+  group_by(row) %>%
+  slice_max(order_by = delta_mcc, n = 2, with_ties = FALSE) %>% # Only need the top peak
+  ungroup()
+
+col_order <- peak_info %>%
+  dplyr::count(col, sort = TRUE, name = "n_peaks") %>%
+  pull(col)
+
+# Step 2: Get the order for the rows (TFs)
+
+row_order <- peak_info %>%
+  mutate(col = factor(col, levels = col_order)) %>% # Use the column order we just made
+  arrange(col) %>% # Sort by the ordered cell line factor
+  pull(row)
+
+heat_matrix <- heat_matrix[row_order, col_order]
+
+
+library(ComplexHeatmap)
+library(circlize) # For the colorRamp2 function
+
+# Define the color scale, similar to your ggplot scale
+limit_val <- max(abs(heat_matrix), na.rm = TRUE)
+col_fun <- colorRamp2(c(-limit_val, 0, limit_val), c("dodgerblue4", "white", "firebrick2"))
+
+# Generate the heatmap
+ht <- Heatmap(
+  heat_matrix,
+  name = "Δ MCC", # Legend title
+
+  # --- Aesthetics ---
+  col = col_fun,
+  na_col = "white",
+  # rect_gp = gpar(col = "black", lwd = 0.2), # Add tile borders
+
+  # --- Ordering and Clustering ---
+  cluster_rows = FALSE, # We are supplying our own order
+  cluster_columns = FALSE, # We are supplying our own order
+  row_order = row_order,
+  column_order = col_order,
+
+  # --- Labels and Text ---
+  row_names_gp = gpar(fontsize = 7),
+  column_names_gp = gpar(fontsize = 10),
+  column_title = "Cell Line",
+  row_title = "Transcription Factor",
+
+  # --- Other Options ---
+  show_row_dend = FALSE, # Don't show dendrograms
+  show_column_dend = FALSE
+)
+
+# To display the heatmap in RStudio
+draw(ht)
+
+# To save the heatmap to a file
+png("../FIGURES/Figure5/Supple_Figure_5B.png", 
+    width = 10,
+    height = 20,
+    units = "in",
+    res = 600)
+
+draw(ht)
+dev.off()
+```
+
+
+```{r}
+
+```
+

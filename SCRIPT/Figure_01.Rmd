@@ -1,0 +1,335 @@
+---
+title: "Figure 1 — PCA of M‑words"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: false
+date: "2025-08-08"
+params:
+  randomize: false     # if TRUE, gaussian‑randomize features to match means & sds (null model)
+  n_pc: 2              # number of PCs to compute distances on
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.retina = 2,
+                      fig.align = "center")
+```
+
+
+
+## Libraries & project setup
+```{r}
+library(tidyverse)   
+library(FactoMineR)
+library(factoextra)
+library(ggdist)
+library(patchwork)
+```
+
+
+
+```{r}
+# All file paths below are relative to the project root via `here()`
+DATA_DIR <- here("GITHUB_REPO", "RESULTS", "01_PCA")
+FIG_DIR  <- here("GITHUB_REPO", "FIGURES", "01_PCA")
+```
+
+
+
+
+## Helper functions
+```{r}
+# Read one feature matrix and (optionally) randomize it feature‑wise to match mean/sd
+load_feature_df <- function(feature_name, randomize = FALSE) {
+  
+  path <- here(DATA_DIR, sprintf("ROHS_MWORDS_PCA_FLEX/MWORDS_pca_input_%s_0.tsv", feature_name))
+  df   <- readr::read_tsv(path, col_names = FALSE)
+  X    <- scale(df[, 2:ncol(df)]) %>% as.data.frame()
+  
+  if (isTRUE(randomize)) {
+    mu <- sapply(X, mean)
+    sd <- sapply(X, sd)
+    X  <- as.data.frame(mapply(function(m, s, n) stats::rnorm(n, mean = m, sd = s),
+                               mu, sd, MoreArgs = list(n = nrow(X))))
+    names(X) <- paste0("rand_", seq_len(ncol(X)))
+  }
+  
+  X
+}
+
+# Compute PCA without double‑scaling (inputs already scaled above)
+run_pca <- function(X) {
+  FactoMineR::PCA(X, scale.unit = FALSE, graph = FALSE)
+}
+
+# Tidy scores and eigen %
+pc_tidy <- function(pca, n = 2) {
+  scores <- as.data.frame(pca$ind$coord[, seq_len(n), drop = FALSE])
+  names(scores) <- paste0("Dim.", seq_len(n))
+  eig <- pca$eig[seq_len(max(2, n)), "percentage of variance"]
+  list(scores = scores, eig = eig)
+}
+
+# Pairwise distances on first n PCs; label intra vs inter family
+pairwise_distance_df <- function(scores, families, n_pc = 2) {
+  S <- as.matrix(scores[, seq_len(n_pc), drop = FALSE])
+  D <- as.matrix(dist(S, method = "euclidean"))
+  
+  # Keep upper triangle, i<j
+  idx <- which(upper.tri(D), arr.ind = TRUE)
+  
+  tibble::tibble(
+    i = idx[, 1], j = idx[, 2],
+    Fam_i = families[idx[, 1]], Fam_j = families[idx[, 2]],
+    interactions = if_else(Fam_i == Fam_j, "intra-family", "inter-family"),
+    Dist = D[idx]
+  )
+}
+
+# Clean PCA scatter for publication
+plot_pca_scatter <- function(scores, families, eig) {
+  df <- scores %>% dplyr::mutate(family = families)
+  ggplot(df, aes(`Dim.1`, `Dim.2`)) +
+    geom_point(aes(fill = family), shape = 21, size = 3, alpha = 0.9, color = "black") +
+    stat_ellipse(aes(color = family), linewidth = 0.5, show.legend = FALSE) +
+    theme_bw(base_size = 14) +
+    labs(
+      x = sprintf("Principal Component 1 (%.1f%%)", eig[1]),
+      y = sprintf("Principal Component 2 (%.1f%%)", eig[2])
+    ) +
+    guides(color = "none") +
+  ggsci::scale_fill_d3()
+  
+}
+
+# Save helper that always writes into FIG_DIR
+save_plot <- function(plot, filename, width, height) {
+  ggsave(filename = file.path(FIG_DIR, filename), plot = plot,
+         width = width, height = height, dpi = 300, limitsize = FALSE)
+}
+```
+
+
+
+
+
+## Figure 1A — PCA of 1‑mer encodings vs 1‑mer + flexibility
+```{r}
+# 1‑mer encoding input
+m1_path <- here(DATA_DIR, "MWORDS_pca_input_1mer.tsv")
+m1_df   <- readr::read_tsv(m1_path, col_names = FALSE)
+# Split metadata: assumes col1 is "family_tf"
+meta    <- tidyr::separate(m1_df, X1, into = c("family", "tf"), sep = "_", remove = FALSE)
+
+# Scale 1‑mer features to unit variance, then PCA
+m1_scaled <- scale(meta[, 4:ncol(meta)]) %>% as.data.frame()
+pca_1mer  <- run_pca(m1_scaled)
+t_1mer    <- pc_tidy(pca_1mer, n = 2)
+
+# Flexibility features; provide your feature names here
+flex_features <- c("DNaseI", "NPP", "twistDisp", "trxDi", "stiffness")  # extend as needed, e.g., c("DNaseI","Bend", ...)
+flex_list     <- purrr::map(flex_features, load_feature_df, randomize = params$randomize)
+flex_df       <- purrr::reduce(flex_list, cbind)
+
+# Combine scaled 1‑mer + (optionally randomized) flexibility, then PCA
+m1_flex_df <- bind_cols(m1_scaled, flex_df)
+pca_m1flex <- run_pca(m1_flex_df)
+t_m1flex   <- pc_tidy(pca_m1flex, n = 2)
+
+p_1mer    <- plot_pca_scatter(t_1mer$scores, families = meta$family, eig = t_1mer$eig) +
+             ggtitle("1‑mer model")
+p_m1flex  <- plot_pca_scatter(t_m1flex$scores, families = meta$family, eig = t_m1flex$eig) +
+             ggtitle("1‑mer + flexibility model")
+
+panel_pca <- ggpubr::ggarrange(p_1mer, p_m1flex, common.legend = T)
+```
+
+save figure
+```{r}
+panel_pca %>% 
+  ggsave(., filename = "FIGURES/Figure1/Figure_1A.png", width = 12, height = 6, dpi = 300)
+
+
+```
+
+## Figure 1B — Intra‑ vs inter‑family distances on PC space
+
+Figure 1B (Left panel)
+```{r}
+# Distances on first `params$n_pc` PCs using the 1‑mer model only
+pd_1mer <- pairwise_distance_df(t_1mer$scores, families = meta$family, n_pc = params$n_pc)
+
+# Compute medians for annotation
+med_df_1mer <- pd_1mer %>%
+  dplyr::group_by(interactions) %>%
+  dplyr::summarise(med = median(Dist, na.rm = TRUE), .groups = "drop")
+
+# Difference between medians (inter - intra), if both present
+med_delta_1mer <- tryCatch({
+  inter_med <- med_df_1mer$med[med_df_1mer$interactions == "inter-family"][1]
+  intra_med <- med_df_1mer$med[med_df_1mer$interactions == "intra-family"][1]
+  inter_med - intra_med
+}, error = function(e) NA_real_)
+
+# Y position for the delta label
+y_top_1mer <- max(pd_1mer$Dist, na.rm = TRUE)
+
+
+
+p_dist_1mer <- ggplot(pd_1mer, aes(x = interactions, 
+                                   y = Dist, 
+                                   fill = interactions)) +
+  ggdist::stat_halfeye(adjust = 0.5, width = 0.7, .width = 0, justification = -0.2, point_colour = NA) +
+  geom_boxplot(width = 0.1, outlier.shape = NA) +
+  # annotate median text above each box
+  geom_text(data = med_df_1mer, aes(x = interactions, y = med, label = sprintf("median = %.3f", med)),
+            vjust = -0.8, fontface = "bold", inherit.aes = FALSE, size = 5) +
+  # optional delta label centered between the two boxes
+  {if (!is.na(med_delta_1mer)) annotate("text", x = 1.5, y = y_top_1mer * 1.02,
+                                   label = sprintf("Δ median = %.3f", med_delta_1mer),
+                                   vjust = 0, fontface = "bold", size = 5)} +
+  theme_bw(base_size = 20) +
+  ggsci::scale_fill_d3() + 
+  theme(legend.position = "none", axis.title.x = element_blank()) +
+  scale_y_continuous(limits = c(0, 15)) +
+  coord_cartesian(clip = "off") +
+  ylab("Euclidean distance") +
+  ggtitle(sprintf("1‑mer model", params$n_pc))
+
+p_dist_1mer
+```
+
+Figure 2B (Right Panel)
+```{r}
+# Distances on first `params$n_pc` PCs using the combined model
+pd <- pairwise_distance_df(t_m1flex$scores, families = meta$family, n_pc = params$n_pc)
+
+# Compute medians for annotation
+med_df <- pd %>%
+  dplyr::group_by(interactions) %>%
+  dplyr::summarise(med = median(Dist, na.rm = TRUE), .groups = "drop")
+
+# Difference between medians (inter - intra), if both present
+med_delta <- tryCatch({
+  inter_med <- med_df$med[med_df$interactions == "inter-family"][1]
+  intra_med <- med_df$med[med_df$interactions == "intra-family"][1]
+  inter_med - intra_med
+}, error = function(e) NA_real_)
+
+# Y position for the delta label
+y_top <- max(pd$Dist, na.rm = TRUE)
+
+p_dist_1mer_flex <- ggplot(pd, aes(x = interactions, y = Dist, fill = interactions)) +
+  ggdist::stat_halfeye(adjust = 0.5, width = 0.7, .width = 0, justification = -0.2, point_colour = NA) +
+  geom_boxplot(width = 0.1, outlier.shape = NA) +
+  
+  # annotate median text above each box
+  geom_text(data = med_df, 
+            aes(x = interactions, y = med, label = sprintf("median = %.3f", med)),
+            vjust = -0.8, fontface = "bold", inherit.aes = FALSE,
+            size = 5) +
+
+  
+  # optional delta label centered between the two boxes
+  {if (!is.na(med_delta)) annotate("text", x = 1.5, y = y_top * 1.02,
+                                   label = sprintf("Δ median = %.3f", med_delta),
+                                   vjust = 0, fontface = "bold", size =  5)} +
+  
+  theme_bw(base_size = 24) +
+  ggsci::scale_fill_d3() + 
+  theme(legend.position = "none", axis.title.x = element_blank()) +
+  scale_y_continuous(limits = c(0, 15)) +
+  # coord_cartesian(clip = "off") +
+  ylab("") +
+  ggtitle("1‑mer + flexibility")
+
+
+
+p_dist_1mer_flex
+```
+
+```{r}
+ggpubr::ggarrange(p_dist_1mer, p_dist_1mer_flex) %>% 
+  ggsave(., filename = "FIGURES/Figure1/Figure_1B.png", 
+         width = 12, height = 6, dpi = 300)
+```
+
+
+
+## Supplementary — Randomized null model (optional)
+
+```{r}
+set.seed(01021995)
+
+flex_list_rand <- purrr::map(flex_features, load_feature_df, randomize = TRUE)
+flex_df_rand   <- purrr::reduce(flex_list_rand, cbind)
+
+m1_flex_rand_df <- bind_cols(m1_scaled, flex_df_rand)
+pca_m1flex_rand <- run_pca(m1_flex_rand_df)
+
+t_m1flex_rand   <- pc_tidy(pca_m1flex_rand, n = max(2, params$n_pc))
+
+p_m1flex_rand <- plot_pca_scatter(t_m1flex_rand$scores, families = meta$family, eig = t_m1flex_rand$eig) +
+  ggtitle("1‑mer + randomized flexibility") + 
+  theme(legend.position = c(0.20, .75))
+
+p_m1flex_rand
+
+```
+
+## Figure 1B (1‑mer + randomized flexibility) — Intra‑ vs inter‑family distances on PC space
+```{r}
+# Distances on first `params$n_pc` PCs using the 1‑mer + randomized flexibility model
+pd_m1flex_rand <- pairwise_distance_df(t_m1flex_rand$scores, 
+                                       families = meta$family, 
+                                       n_pc = params$n_pc)
+
+# Compute medians for annotation
+med_df_m1flex_rand <- pd_m1flex_rand %>%
+  dplyr::group_by(interactions) %>%
+  dplyr::summarise(med = median(Dist, na.rm = TRUE), .groups = "drop")
+
+# Difference between medians (inter - intra), if both present
+med_delta_m1flex_rand <- tryCatch({
+  inter_med <- med_df_m1flex_rand$med[med_df_m1flex_rand$interactions == "inter-family"][1]
+  intra_med <- med_df_m1flex_rand$med[med_df_m1flex_rand$interactions == "intra-family"][1]
+  inter_med - intra_med
+}, error = function(e) NA_real_)
+
+# Y position for the delta label
+y_top_m1flex_rand <- max(pd_m1flex_rand$Dist, na.rm = TRUE)
+
+p_dist_m1flex_rand <- ggplot(pd_m1flex_rand, aes(x = interactions, y = Dist, fill = interactions)) +
+  ggdist::stat_halfeye(adjust = 0.5, width = 0.7, .width = 0, justification = -0.2, point_colour = NA) +
+  geom_boxplot(width = 0.1, outlier.shape = NA) +
+  # annotate median text above each box
+  geom_text(data = med_df_m1flex_rand, aes(x = interactions, y = med, label = sprintf("median = %.3f", med)),
+            vjust = -0.8, fontface = "bold", inherit.aes = FALSE) +
+  # optional delta label centered between the two boxes
+  {if (!is.na(med_delta_m1flex_rand)) annotate("text", x = 1.5, y = y_top_m1flex_rand * 1.02,
+                                   label = sprintf("Δ median = %.3f", med_delta_m1flex_rand),
+                                   vjust = 0, fontface = "bold")} +
+  theme_bw(base_size = 14) +
+  ggsci::scale_fill_d3() + 
+  theme(legend.position = "none", axis.title.x = element_blank()) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+  coord_cartesian(clip = "off") +
+  ylab("Euclidean distance") +
+  ggtitle("1‑mer + randomized flexibility")
+
+p_dist_m1flex_rand 
+# save_plot(p_dist_m1flex_rand, sprintf("Distances_intra_vs_inter_1mer+Flex_RANDOM_%dPC.png", params$n_pc), width = 6.5, height = 5)
+```
+
+```{r}
+ggpubr::ggarrange(p_m1flex_rand, p_dist_m1flex_rand) %>% 
+  ggsave(., filename = "FIGURES/Figure1/Supple_Figure_1.png", width = 12, height = 6, dpi = 400)
+```
+
+## Session info
+
+```{r}
+sessionInfo()

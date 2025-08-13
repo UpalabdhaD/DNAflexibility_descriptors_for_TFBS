@@ -1,0 +1,517 @@
+---
+title: "L2-MLR-Figure2"
+output: html_document
+date: "2025-08-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggsci)
+```
+
+
+Colors
+```{r}
+
+# Assuming colors_27 is defined somewhere in your code
+colors_1 <- ggsci::pal_d3(palette = "category20b")
+colors_2 <- ggsci::pal_cosmic()
+colors_3 <- ggsci::pal_igv()
+
+
+colors_27 <- c(colors_1(10), colors_2(10), colors_3(10))
+```
+
+Figure 2A
+```{r}
+
+options(scipen = 999) # stop scintific notations
+
+L2MLR_MWORDS <- read_tsv("DATA/02_L2MLR/MLR_L2_features_merged_interaction.tsv")
+
+flex_vs_1mer_f_merged <- L2MLR_MWORDS %>% 
+  filter(r2_test > 0) %>% 
+  group_by(fileid, features) %>% 
+  mutate(mean_r2_over10fold = round(mean(r2_test), 4)) %>%
+  mutate(features = str_remove_all(features, "\\(|\\)|'|,")) %>%
+  select(-c(pos, r2_test, mse_test, mae_test, best_alpha)) %>%
+  distinct() %>%
+  mutate(features = str_replace_all(features, "DNaseI twistDisp NPP stiffness trxDi", 
+                                    "+ Flexibility")) %>% 
+  pivot_wider(id_cols = fileid, names_from = features, values_from = mean_r2_over10fold) %>% 
+  separate(fileid, into = c("family", "TF")) %>% 
+  ggplot(., aes(x = `1mer`, y = `1mer + Flexibility`, fill = family)) +
+  geom_point(size = 5, shape = 21, alpha = 0.7) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  geom_abline(intercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = colors_27) +
+  theme_bw(base_size = 28) +
+    theme(legend.position = c(0.75, 0.26), 
+          legend.text = element_text(size = 14)) +
+  xlab(expression(R^2 ~ "(1mer)")) +
+  ylab(bquote(R^2 ~ "(1mer + Flexibility)"))
+  
+
+
+
+flex_vs_1mer_f_merged %>% 
+  ggsave(., filename = "FIGURES/Figure2/Figure2A.png", height = 10, width = 12, dpi = 300)
+```
+
+Figure 2B: Shuffled flexibility
+```{r}
+
+comparison_shuffled_dnaflex <- read_tsv("DATA/02_L2MLR/Shuffled_vs_DNAflex_comparison.tsv")  
+
+  
+comparison_shuffled_dnaflex_plot <- comparison_shuffled_dnaflex %>%   
+  group_by(fileid, dataset, features) %>%
+  mutate(mean_r2_over_10fold = mean(r2_test)) %>%
+  ungroup() %>% 
+  select(fileid, dataset, mean_r2_over_10fold) %>% 
+  distinct() %>% 
+  separate(fileid, into = c("Family", 'TF', 'suffix')) %>%
+  filter(mean_r2_over_10fold > 0, mean_r2_over_10fold < 1) %>% 
+  pivot_wider(id_cols = c(Family, TF, suffix), 
+              names_from = dataset, 
+              values_from = mean_r2_over_10fold) %>%  
+  ggplot(., aes(x = shuffled, y = DNAflex, fill=Family)) +
+  geom_point(size = 5, shape = 21, alpha = 0.7) +
+  geom_abline(intercept = 0, linetype  = 'dashed') +
+  theme_bw(base_size = 28) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1))  +
+  scale_fill_manual(values = colors_27) +
+  xlab(expression(R^2 ~ "(DNA flexibility shuffled)")) +
+  ylab(bquote(R^2 ~ "(DNA flexibility)")) +
+  theme(legend.position = c(0.78, 0.26),
+          legend.text = element_text(size = 12))
+
+
+
+comparison_shuffled_dnaflex_plot %>% 
+  ggsave(., filename = "FIGURES/Figure2/Figure2B.png", height = 10, width = 12, dpi = 300)
+```
+
+
+
+Figure 2C: 1mer + DNAflexibility vs 1mer + DNAShape (Yang et al)
+```{r}
+ev1_supple <- read_csv("DATA/02_L2MLR/msb167238-sup-0002-tableev1.csv")
+```
+
+
+```{r}
+dnashape_vs_flex <- L2MLR_MWORDS %>% 
+  group_by(fileid, features) %>% 
+  mutate(mean_r2_over10fold = round(mean(r2_test), 4)) %>%   
+  mutate(features = str_remove_all(features, "\\(|\\)|'|,"))  %>% 
+  filter(features != "1mer") %>% 
+  select(-c(pos, r2_test, mse_test, mae_test, best_alpha))  %>% 
+  # summarise(n = n())
+  left_join(ev1_supple, c("fileid" = "Dataset")) %>% 
+  select(-c(fileid, features, `>10%?`)) %>% 
+  
+  distinct() %>% 
+  ggplot(., aes(x = mean_r2_over10fold, 
+                y = `R^2(1mer+shape)`, 
+                fill = Family)) + 
+  
+  geom_point(size = 5, shape = 21, alpha = 0.7) +
+  theme_bw(base_size = 15) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  geom_abline(intercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = colors_27) +
+  theme_bw(base_size = 28)  +
+    theme(legend.position = c(0.75, 0.26),
+          legend.text = element_text(size = 14)) +
+  ylab(expression(R^2 ~ "(1mer + DNAShapeR)")) +
+  xlab(bquote(R^2 ~ "(1mer + Flexibility)")) 
+
+
+dnashape_vs_flex %>% 
+  ggsave(., filename = "FIGURES/Figure2/Figure2C.png", height = 10, width = 12, dpi = 300)
+
+
+```
+
+Figure 2D
+```{r}
+
+options(scipen = 999) 
+
+
+flex_vs_shape <- L2MLR_MWORDS %>% 
+  group_by(fileid, features) %>% 
+  mutate(mean_r2_over10fold = round(mean(r2_test), 4)) %>%   
+  ungroup() %>% 
+  # mutate(mean_r2_over10fold = round(mean_r2_over10fold, 2)) %>%  
+  mutate(features = str_remove_all(features, "\\(|\\)|'|,"))  %>% 
+  filter(features != "1mer") %>% 
+  select(-c(pos, r2_test, mse_test, mae_test, best_alpha))  %>% 
+  # summarise(n = n())
+  left_join(ev1_supple, c("fileid" = "Dataset")) %>%   
+  select(-c(`>10%?`)) %>% 
+  
+  distinct() %>% 
+   separate(fileid, into = c("family", "tf")) %>% 
+  mutate(features = str_replace_all(features, "DNaseI twistDisp NPP stiffness trxDi", 
+                                    "+ Flexibility")) %>%
+  
+  mutate(diff = mean_r2_over10fold - `R^2(1mer+shape)`) %>%
+  
+  arrange(desc(diff)) %>% 
+  head(20) %>%
+  
+  select(TF, family, mean_r2_over10fold, `R^2(1mer+shape)`, diff) %>%    
+  pivot_longer(-c(TF, family, diff), names_to = "Model", values_to = "R2")  %>% 
+  mutate(model_name = ifelse(str_detect(Model, "shape"), "DNAShapeR", "Flexibility")) %>% 
+  
+  ggplot(., aes(x = R2, y = reorder(TF, diff))) +
+  geom_line(size = 4, color = 'grey80') +
+  geom_point(aes(color = model_name), size = 5) +
+  # geom_segment(aes(x = R2, y = reorder(TF, diff), xend))
+  theme_bw(base_size = 26) +
+  guides(color = guide_legend(title = "Model")) +
+  scale_color_aaas() +
+  labs( 
+       y = "TFs", 
+       x = bquote(R^2 ~ "(1mer + Model)"))+
+  theme(legend.position = c(0.85, 0.2))
+  
+  
+  
+  
+  
+flex_vs_shape %>% 
+  ggsave(., filename = "FIGURES/Figure2/Figure2D.png", 
+          dpi = 300, height = 10, width = 12)
+
+```
+
+
+Figure 2E: Drosophila SELEX-Seq datasets
+```{r}
+
+drosophila_selexSeq_w_negative_folds <- 
+  read_tsv("DATA/02_L2MLR/L2_MLR_HoxExd.tsv") %>% 
+   mutate(features = str_remove_all(features, "\\(|\\)|'|,")) %>% 
+  mutate(features = str_replace_all(features, "DNaseI twistDisp NPP stiffness trxDi",
+                                    "+ Flexibility")) %>% 
+  
+  group_by(fileid, pos, features) %>% 
+  mutate(mean_r2  = mean(r2_test)) %>% 
+  select(fileid, features, mean_r2) %>% 
+  distinct() %>% 
+  
+  pivot_wider(id_cols = fileid, names_from = "features", values_from = mean_r2) %>% 
+
+  mutate(Proteins = case_when(
+    # str_detect(fileid, 'WT') ~ "WT",
+    str_detect(fileid, 'Antp') ~ "Antp",
+    str_detect(fileid, 'Ubx') ~ "Ubx",
+    str_detect(fileid, 'Scr') ~ "Scr",
+    str_detect(fileid, 'Abd|Dfd|Lab|PbFl|Ubx') ~ "Hox"
+    )) %>% 
+
+  ggplot(.,aes(x = `1mer`, `1mer + Flexibility`, color = Proteins)) +
+  
+  
+  geom_point(size = 3) +
+  scale_x_continuous(limits = c(0,1)) +
+  scale_y_continuous(limits = c(0,1)) +
+  geom_abline(linetype= "dashed") +
+  theme_bw(base_size = 24) +
+  scale_color_d3() +
+   theme(legend.position = c(0.85, 0.3)) +
+  xlab(expression(R^2 ~ "(1mer)")) +
+  ylab(bquote(R^2 ~ "(1mer + Flexibility)"))
+  
+  
+
+drosophila_selexSeq_w_negative_folds  %>% 
+  ggsave(., filename = 'FIGURES/Figure2/Figure2E.png', height = 10, width = 12, dpi = 300)
+
+```
+
+Supplementary 2A
+```{r}
+
+mlr_mwords_single_feat <- read_tsv("DATA/02_L2MLR/MLR_RESULTS_updated_1mer.tsv")
+
+
+
+mlr_res_single_feat <- mlr_mwords_single_feat %>% 
+   separate(fileid, into = c("family", "TF")) %>% 
+  mutate(features = str_remove_all(features, "\\(|\\)|'") %>%
+           str_replace("^1mer,\\s*", "") %>%
+           trimws()
+  )  %>% 
+  mutate(features = ifelse(features == "", "1mer", features)) %>% 
+  
+
+  select(family, TF, features, r2_full) %>%
+  filter(!TF %in% c("NKX3", "NKX6")) %>% 
+  pivot_wider(id_cols = c(family, TF), names_from = features, values_from = r2_full)
+
+
+# Plotting function
+plot_mlr <- function(df = mlr_res_df, feat = "DNaseI"){
+  
+  p <- df %>% ggplot(., aes(x = `1mer`, y = !!sym(feat), fill = family)) + 
+    
+    geom_point(size = 3, alpha = 0.6, shape = 21, color = "grey30") +
+
+    theme_bw(base_size = 28)  +
+    theme(legend.position = c(0.78, 0.26),
+          legend.text = element_text(size = 14)) +
+    
+    scale_fill_manual(values = colors_27) +
+    geom_abline(intercept = 0, linetype = "dashed") + 
+    scale_x_continuous(limits = c(0,1)) +
+    scale_y_continuous(limits = c(0,1))  +
+    xlab(expression(R^2 ~ "(1mer)")) +
+    ylab(bquote(R^2 ~ "(1mer + " * .(feat) * ")")) 
+
+  return(p)
+}
+
+
+# plotlist
+per_features_r2_imporvement <- c("DNaseI", "NPP", "twistDisp", "trxDi", "stiffness") %>% 
+  map(., .f = ~ plot_mlr(mlr_res_single_feat, .x))
+
+# merge and save
+ggpubr::ggarrange(plotlist = per_features_r2_imporvement, common.legend = T) %>% 
+  ggsave(., filename = "FIGURES/Figure2/Supple_Figure_2A.png", 
+         height = 15, width = 15, dpi = 300)
+
+```
+
+Supplementary 2B
+```{r}
+
+
+
+per_fam_comparison <- L2MLR_MWORDS %>%
+  group_by(fileid, features) %>%
+  mutate(mean_r2_over10fold = round(mean(r2_test), 4)) %>%
+  mutate(mean_r2_over10fold = round(mean_r2_over10fold, 2)) %>%
+  ungroup() %>% 
+  mutate(features = str_remove_all(features, "\\(|\\)|'|,")) %>% 
+  select(fileid, features, mean_r2_over10fold) %>%
+  distinct() %>% 
+  mutate(features = str_replace_all(features, "DNaseI twistDisp NPP stiffness trxDi",
+                                    "+ Flexibility")) %>%
+  separate(fileid, into = c("Family", "TF"))  %>% 
+  
+  ggplot(., aes(x = features, y = mean_r2_over10fold)) +
+  
+  geom_jitter(aes(color = features)) +
+  stat_summary(fun.data="mean_sdl",  
+               fun.args = list(mult=1), 
+               geom="pointrange", 
+               color = "black",
+               show.legend = F) +
+  
+  facet_wrap(~ Family, nrow = 5) +
+  theme_bw(base_size = 21) +
+
+  theme(legend.position = "top", 
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x  = element_blank(),
+        strip.text = element_text(size = 14)) +
+
+    scale_color_aaas() +
+  
+  
+  ggpubr::stat_compare_means(label = "p.signif", 
+                             label.y = 0.95, 
+                             ref.group = "1mer") +
+  
+  
+  
+  scale_y_continuous(limits = c(0, 1)) +
+  ylab(expression(R^2)) +
+  xlab("")
+  
+  
+per_fam_comparison %>% 
+  ggsave(., filename = 'FIGURES/Figure2/Supple_Figure_2B.png',
+         height = 15, width = 12)
+  
+```
+
+
+
+Supplementary 2C
+```{r}
+
+
+options(scipen = 999)
+
+per_family_DNAShape_vs_flex <-
+  L2MLR_MWORDS %>%
+  group_by(fileid, features) %>%
+  mutate(mean_r2_over10fold = round(mean(r2_test), 4)) %>%
+  mutate(mean_r2_over10fold = round(mean_r2_over10fold, 4)) %>%
+  ungroup() %>% 
+  mutate(features = str_remove_all(features, "\\(|\\)|'|,")) %>% 
+  select(fileid, features, mean_r2_over10fold) %>%
+  distinct() %>% 
+  mutate(features = str_replace_all(features, "DNaseI twistDisp NPP stiffness trxDi",
+                                    "+ Flexibility")) %>% 
+  pivot_wider(id_cols = fileid, names_from = features, values_from = mean_r2_over10fold) %>%
+  
+  left_join(ev1_supple, c("fileid" = "Dataset")) %>% 
+  
+  mutate(
+    "delta R^2 (1mer + flexibility)" = (`1mer + Flexibility` - `1mer`),
+    ">10% flexibility" = ifelse(`delta R^2 (1mer + flexibility)` > .1, 'YES', 'NO'),
+    "R^2_DNAShapeVsFlexibility" = ifelse(`1mer + Flexibility` > `R^2(1mer+shape)`,
+                                                "Flexibility",
+                                                "DNAShape")) %>% 
+   
+  select(c(fileid, `1mer + Flexibility`, `R^2(1mer+shape)`, `>10% flexibility`)) %>% 
+  
+  filter(!fileid %in% c('C2H2_ZBTB7A_TGAATA20NGA_CGACCACC_10_3', 
+                        'C2H2_ZBTB7B_TAGCCT20NCG_CGACCACC_14_3')) %>% 
+  
+  
+  select(-c(`>10% flexibility`)) %>% 
+  
+  pivot_longer(-c(fileid), names_to = "Model", values_to = "R^2 improvement") %>% 
+  
+  separate(fileid, into = c("Family", "TF")) %>% 
+ 
+  ggplot(., aes(x =`Model`,
+                y = `R^2 improvement`)) +
+  
+  geom_jitter(aes(color = `Model`)) +
+  
+  stat_summary(fun.data="mean_sdl",  
+               fun.args = list(mult=1), 
+               geom="pointrange", 
+               color = "black",
+               show.legend = F) +
+
+  facet_wrap(~ Family, nrow = 6, ncol = 6, scales = "free") +
+  theme_bw() +
+
+  theme(legend.position = "top", 
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x  = element_blank(),
+        strip.text = element_text(size = 14)) +
+
+    scale_color_aaas() +
+  
+  
+  ggpubr::stat_compare_means(label = "p.signif", method = "wilcox") +
+
+  ylab(expression(R^2)) +
+  xlab("")
+  
+  
+  
+per_family_DNAShape_vs_flex %>% 
+  ggsave(., filename = 'FIGURES/Figure2/Supple_Figure_2C.png',
+         height = 15, width = 12)
+
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
